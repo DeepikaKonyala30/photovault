@@ -1,3 +1,7 @@
+# =========================
+# 🔥 NODE + REACT PROJECT
+# =========================
+
 # Logs
 logs
 *.log
@@ -7,21 +11,46 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-node_modules
-dist
-dist-ssr
-*.local
+# Dependency directories
+node_modules/
+dist/
+dist-ssr/
+build/
 
-# Editor directories and files
+# Local environment files
+.env
+.env.local
+.env.development.local
+.env.production.local
+.env.test.local
+
+# Google Cloud keys (VERY IMPORTANT)
+gcloud-key.json
+backend/config/gcloud-key.json
+
+# System files
+.DS_Store
+Thumbs.db
+
+# IDE settings
 .vscode/*
 !.vscode/extensions.json
-.idea
-.DS_Store
+.idea/
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
 *.sw?
-.env
-# Ignore Google Cloud credentials
-backend/config/gcloud-key.json
+
+# Other temporary files
+*.local
+__pycache__/
+*.pid
+*.seed
+*.tgz
+
+# Upload folders (if storing images locally)
+uploads/
+public/uploads/
+temp/
+tmp/

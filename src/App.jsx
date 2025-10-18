@@ -1,9 +1,36 @@
-/* App.jsx */
-import React, { useState, useEffect } from "react"; // ✅ important
-import Home from "./pages/Home"; // do NOT include the .jsx extension in the import
+import React, { useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import SplashScreen from "./components/SplashScreen";
+import Home from "./pages/Home";
 
 function App() {
-  return <Home />;
+  const [showApp, setShowApp] = useState(false);
+
+  return (
+    <>
+      <AnimatePresence mode="wait">
+        {!showApp && (
+          <motion.div
+            key="splash"
+            initial={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.8, ease: "easeInOut" }}
+          >
+            <SplashScreen onFinish={() => setShowApp(true)} />
+          </motion.div>
+        )}
+      </AnimatePresence>
+      {showApp && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 1.2, ease: "easeInOut", delay: 0.2 }}
+        >
+          <Home />
+        </motion.div>
+      )}
+    </>
+  );
 }
 
 export default App;
