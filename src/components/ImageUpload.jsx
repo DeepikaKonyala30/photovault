@@ -1,10 +1,13 @@
+// ImageUpload.jsx (Fixed: Preview now displays as background inside dropzone; no separate img element; size unchanged)
 import React, { useState, useEffect } from "react";
 import axios from "axios";
 import { motion, AnimatePresence } from "framer-motion";
-import Dropzone from "react-dropzone";
+import { useDropzone } from "react-dropzone";
 import Modal from "react-modal";
 
 Modal.setAppElement("#root");
+
+const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:5000"; // Fallback
 
 const TAG_OPTIONS = [
   "Nature", "People", "Animals", "Technology", "Travel", "Architecture",
@@ -12,7 +15,6 @@ const TAG_OPTIONS = [
   "Ocean", "Mountains", "Cityscape",
 ];
 
-// New: Low-Code Linear Progress Bar (Motion div—~4 lines, no deps)
 const ProgressBar = ({ progress = 0 }) => (
   <div style={{ width: '100%', height: '8px', background: '#e5e7eb', borderRadius: '4px', overflow: 'hidden' }}>
     <motion.div
@@ -24,171 +26,206 @@ const ProgressBar = ({ progress = 0 }) => (
   </div>
 );
 
-export default function ImageUpload({ onUploadSuccess, disabled }) {
+export default function ImageUpload({ onUploadSuccess, disabled = false }) {
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState(null);
   const [customTags, setCustomTags] = useState("");
   const [selectedTags, setSelectedTags] = useState([]);
-  const [aiTags, setAITags] = useState([]);
   const [progress, setProgress] = useState(0);
   const [message, setMessage] = useState("");
   const [isUploading, setIsUploading] = useState(false);
   const [modalIsOpen, setModalIsOpen] = useState(false);
 
+  const { getRootProps, getInputProps } = useDropzone({
+    onDrop: acceptedFiles => setFile(acceptedFiles[0]),
+    accept: { 'image/*': [] },
+    disabled: disabled || isUploading,
+    multiple: false
+  });
+
   const handleTagToggle = (tag) => {
     setSelectedTags(prev => prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag]);
   };
 
-  // Concise: Preview gen with optional compress/resize
   useEffect(() => {
     if (file) {
       const reader = new FileReader();
       reader.onloadend = (e) => {
-        const img = new Image();
-        img.onload = () => {
-          if (file.size > 1024 * 1024 || img.width > 512 || img.height > 512) {
-            const canvas = document.createElement('canvas');
-            const ctx = canvas.getContext('2d');
-            const maxDim = 512;
-            let { width, height } = img;
-            if (width > height) {
-              if (width > maxDim) height = (height * maxDim) / width, width = maxDim;
-            } else {
-              if (height > maxDim) width = (width * maxDim) / height, height = maxDim;
-            }
-            canvas.width = width; canvas.height = height;
-            ctx.drawImage(img, 0, 0, width, height);
-            setPreview(canvas.toDataURL('image/jpeg', 0.8));
-          } else {
-            setPreview(e.target.result);
-          }
-        };
-        img.src = e.target.result;
+        setPreview(e.target.result);
       };
       reader.readAsDataURL(file);
+
+      // Optional: Resize logic for large images
+      if (file.size > 5 * 1024 * 1024) { // >5MB
+        console.warn('Large file detected—consider compressing on backend.');
+      }
     } else {
-      setPreview(null); setAITags([]);
+      setPreview(null);
     }
   }, [file]);
 
-  const handleDrop = async (acceptedFiles) => {
-    if (acceptedFiles[0]) {
-      setFile(acceptedFiles[0]);
-      const formData = new FormData();
-      formData.append('image', acceptedFiles[0]);
-      try {
-        const { data: { tags } } = await axios.post('http://localhost:5000/api/images/preview-tags', formData, {
-          headers: { 'Content-Type': 'multipart/form-data' }
-        });
-        setAITags(tags.slice(0, 3));
-      } catch (err) {
-        console.warn('AI preview failed:', err);
-        setAITags([]);
-      }
-    }
-  };
-
-  const handleUpload = async (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    if (disabled || !file) {
-      if (!file) { setMessage("❌ Please select an image!"); setModalIsOpen(true); }
+    if (!file) {
+      setMessage("Please select an image.");
+      setModalIsOpen(true);
       return;
     }
 
-    const manualTags = customTags.split(",").map(t => t.trim()).filter(Boolean);
-    const allTags = [...new Set([...selectedTags, ...manualTags])];
-
     const formData = new FormData();
-    formData.append("image", file);
-    formData.append("tags", allTags.join(","));
-
-    setIsUploading(true); setMessage(""); setProgress(0);
+    formData.append('image', file);
+    const allTags = [...selectedTags, ...(customTags ? customTags.split(',').map(t => t.trim()).filter(Boolean) : [])];
+    if (allTags.length) formData.append('tags', allTags.join(','));
 
     try {
-      const res = await axios.post("http://localhost:5000/api/images/upload", formData, {
-        headers: { "Content-Type": "multipart/form-data" },
-        onUploadProgress: (event) => event.total && setProgress(Math.round((event.loaded * 100) / event.total)),
+      setIsUploading(true);
+      setProgress(0);
+      const response = await axios.post(`${API_BASE}/api/images/upload`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        onUploadProgress: (progressEvent) => {
+          if (progressEvent.total) {
+            setProgress(Math.round((progressEvent.loaded * 100) / progressEvent.total));
+          }
+        },
       });
-
-      setMessage("✅ Upload successful!");
-      setFile(null); setPreview(null); setCustomTags(""); setSelectedTags([]); setAITags([]);
-      onUploadSuccess(res.data.image);
+      const newImage = response.data.image; // Extract full image object
+      setMessage(`Upload success! AI tags: ${newImage.tags?.join(', ') || 'None'}`);
+      onUploadSuccess(newImage); // Pass the image object!
+      // Reset form
+      setFile(null);
+      setPreview(null);
+      setSelectedTags([]);
+      setCustomTags("");
     } catch (err) {
       console.error(err);
-      setMessage(`❌ ${err.response?.data?.message || err.message || "Upload failed!"}`);
-      setModalIsOpen(true);
+      setMessage(`Upload failed: ${err.response?.data?.message || err.message}`);
     } finally {
-      setIsUploading(false); setProgress(0);
+      setIsUploading(false);
+      setProgress(0);
+      setModalIsOpen(true);
     }
   };
 
-  const formStyle = {
-    opacity: disabled ? 0.5 : 1,
-    pointerEvents: disabled ? 'none' : 'auto',
-    display: 'flex', flexDirection: 'column', gap: '1rem', height: '100%'
+  // Conditional styles for dropzone with preview (Fixed: Expanded background shorthand to avoid conflicts)
+  const dropzoneStyle = {
+    border: '2px dashed rgba(255,255,255,0.3)', 
+    borderRadius: '0.5rem', 
+    padding: '2rem', 
+    textAlign: 'center', 
+    cursor: 'pointer',
+    transition: 'all 0.2s ease',
+    position: 'relative'
   };
 
-  const dropStyle = {
-    height: '200px', width: '100%', border: '2px dashed #d1d5db', borderRadius: '0.5rem',
-    display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#f9fafb',
-    cursor: disabled ? 'not-allowed' : 'pointer', overflow: 'hidden'
-  };
+  if (preview) {
+    Object.assign(dropzoneStyle, {
+      backgroundImage: `url(${preview})`,
+      backgroundPosition: 'center',
+      backgroundSize: 'cover',
+      backgroundRepeat: 'no-repeat',
+      backgroundColor: 'transparent'
+    });
+  } else {
+    Object.assign(dropzoneStyle, {
+      backgroundColor: 'rgba(255,255,255,0.05)'
+    });
+  }
 
-  const imgStyle = { width: '100%', height: '100%', objectFit: 'cover', borderRadius: '0.25rem' };
+  if (disabled || isUploading) {
+    dropzoneStyle.opacity = 0.5;
+    dropzoneStyle.cursor = 'not-allowed';
+  }
 
   return (
-    <motion.form onSubmit={handleUpload} className="flex-col gap-4" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.3 }} style={formStyle}>
-      {disabled && <p style={{ textAlign: 'center', color: '#f87171', marginBottom: '1rem' }}>Upload disabled while filters are applied. Clear filters to enable.</p>}
-
-      <Dropzone onDrop={handleDrop} disabled={disabled}>
-        {({ getRootProps, getInputProps }) => (
-          <div {...getRootProps()} className="dropzone" style={dropStyle}>
-            <input {...getInputProps()} />
-            {preview ? <img src={preview} alt="Preview" style={imgStyle} /> : <p style={{ textAlign: 'center', color: '#6b7280' }}>Drag & drop or click to select an image</p>}
-          </div>
+    <motion.form onSubmit={handleSubmit} className="upload-panel" style={{ padding: '2rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+      {/* Dropzone with integrated preview */}
+      <div {...getRootProps()} style={dropzoneStyle}>
+        <input {...getInputProps()} />
+        <p style={{ 
+          margin: 0, 
+          color: preview ? 'rgba(255,255,255,0.8)' : 'rgba(255,255,255,0.7)',
+          position: 'absolute',
+          bottom: '1rem',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          background: preview ? 'rgba(0,0,0,0.5)' : 'transparent',
+          padding: preview ? '0.5rem 1rem' : 0,
+          borderRadius: preview ? '0.25rem' : 0
+        }}>
+          {isUploading ? 'Uploading...' : disabled ? 'Filters active—clear to upload' : preview ? 'Image selected – ready to upload' : 'Drag & drop or click to select an image'}
+        </p>
+        {/* Optional overlay for better text visibility if needed */}
+        {preview && (
+          <div style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: 'rgba(0,0,0,0.3)',
+            pointerEvents: 'none'
+          }} />
         )}
-      </Dropzone>
+      </div>
 
-      {aiTags.length > 0 && (
-        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} style={{ fontSize: '0.875rem', color: '#22c55e', textAlign: 'center' }}>
-          🤖 AI Suggests: {aiTags.join(', ')}
-        </motion.div>
-      )}
+      {/* Removed separate preview img element */}
 
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', justifyContent: 'flex-start' }}>
-        {TAG_OPTIONS.map(tag => {
-          const selected = selectedTags.includes(tag);
-          return (
+      <div style={{ marginTop: '1.5rem' }}>
+        <h3 style={{ marginBottom: '0.75rem' }}>Suggested Tags:</h3>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+          {TAG_OPTIONS.map(tag => (
             <motion.button
               key={tag}
               type="button"
               onClick={() => handleTagToggle(tag)}
-              animate={{ backgroundColor: selected ? "#2563eb" : "#f3f4f6", color: selected ? "#fff" : "#111827" }}
-              transition={{ duration: 0.1 }}
-              whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
+              whileHover={{ scale: 0.95 }}
               className="tag-btn"
-              disabled={disabled}
+              disabled={disabled || isUploading}
               style={{ padding: '0.5rem 0.75rem' }}
             >
               {tag}
             </motion.button>
-          );
-        })}
+          ))}
+        </div>
       </div>
 
       <AnimatePresence>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginTop: '0.5rem' }}>
-          {selectedTags.map(tag => (
-            <motion.span
-              key={tag}
-              initial={{ scale: 0 }} animate={{ scale: 1 }} exit={{ scale: 0 }} transition={{ duration: 0.2 }}
-              style={{ backgroundColor: '#dbeafe', padding: '0.25rem 0.5rem', borderRadius: '0.5rem', fontSize: '0.875rem' }}
-            >
-              {tag}
-              <button type="button" onClick={() => handleTagToggle(tag)} style={{ fontSize: '0.75rem', marginLeft: '0.25rem' }}>×</button>
-            </motion.span>
-          ))}
-        </div>
+        {selectedTags.length > 0 && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginTop: '1rem' }}>
+            {selectedTags.map(tag => (
+              <motion.span
+                key={tag}
+                initial={{ scale: 0 }} 
+                animate={{ scale: 1 }} 
+                exit={{ scale: 0 }} 
+                transition={{ duration: 0.2 }}
+                style={{ 
+                  backgroundColor: '#dbeafe', 
+                  padding: '0.25rem 0.5rem', 
+                  borderRadius: '0.5rem', 
+                  fontSize: '0.875rem',
+                  color: '#1e40af'
+                }}
+              >
+                {tag}
+                <button 
+                  type="button" 
+                  onClick={() => handleTagToggle(tag)} 
+                  style={{ 
+                    fontSize: '0.75rem', 
+                    marginLeft: '0.25rem', 
+                    background: 'none', 
+                    border: 'none', 
+                    color: 'inherit',
+                    cursor: 'pointer'
+                  }}
+                >
+                  ×
+                </button>
+              </motion.span>
+            ))}
+          </div>
+        )}
       </AnimatePresence>
 
       <input
@@ -196,27 +233,48 @@ export default function ImageUpload({ onUploadSuccess, disabled }) {
         placeholder="Enter custom tags (comma-separated)"
         value={customTags}
         onChange={e => setCustomTags(e.target.value)}
-        disabled={disabled}
-        style={{ padding: '0.75rem', borderRadius: '0.5rem', border: '1px solid #d1d5db' }}
+        disabled={disabled || isUploading}
+        style={{ 
+          padding: '0.75rem', 
+          borderRadius: '0.5rem', 
+          border: '1px solid rgba(255,255,255,0.2)', 
+          marginTop: '1rem', 
+          width: '100%',
+          background: 'rgba(255,255,255,0.05)',
+          color: '#fff'
+        }}
       />
 
       <button
         type="submit"
-        disabled={isUploading || disabled}
+        disabled={isUploading || disabled || !file}
         className="btn btn-primary"
-        style={{ padding: '0.75rem', fontSize: '1rem' }}
+        style={{ padding: '0.75rem', fontSize: '1rem', width: '100%', marginTop: '1rem' }}
       >
-        {isUploading ? "Uploading..." : "Upload"}
+        {isUploading ? "Uploading..." : "Upload Image"}
       </button>
 
       {progress > 0 && (
-        <motion.div initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }} style={{ marginTop: '0.5rem' }}>
+        <motion.div 
+          initial={{ opacity: 0, scale: 0.8 }} 
+          animate={{ opacity: 1, scale: 1 }} 
+          style={{ marginTop: '0.5rem' }}
+        >
           <ProgressBar progress={progress} />
         </motion.div>
       )}
 
-      <Modal isOpen={modalIsOpen} onRequestClose={() => setModalIsOpen(false)} className="modal-content" overlayClassName="modal-overlay">
-        <p>{message}</p>
+      <Modal 
+        isOpen={modalIsOpen} 
+        onRequestClose={() => setModalIsOpen(false)} 
+        className="modal-content" 
+        overlayClassName="modal-overlay"
+        style={{
+          overlay: { zIndex: 1000 },
+          content: { zIndex: 1001 }
+        }}
+      >
+        <p style={{ marginBottom: '1rem' }}>{message}</p>
         <button onClick={() => setModalIsOpen(false)} className="btn btn-secondary">Close</button>
       </Modal>
     </motion.form>

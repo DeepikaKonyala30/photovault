@@ -24,10 +24,6 @@ build/
 .env.production.local
 .env.test.local
 
-# Google Cloud keys (VERY IMPORTANT)
-gcloud-key.json
-backend/config/gcloud-key.json
-
 # System files
 .DS_Store
 Thumbs.db
