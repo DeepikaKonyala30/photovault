@@ -168,8 +168,6 @@ export default function ImageUpload({ onUploadSuccess, disabled = false }) {
         )}
       </div>
 
-      {/* Removed separate preview img element */}
-
       <div style={{ marginTop: '1.5rem' }}>
         <h3 style={{ marginBottom: '0.75rem' }}>Suggested Tags:</h3>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>

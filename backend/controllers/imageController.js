@@ -7,36 +7,16 @@ const { encode } = await import("blurhash");
 
 // Multer memory storage
 const storage = multer.memoryStorage();
-export const upload = multer({ storage });
-
-// Preview Tags
-export const previewTags = async (req, res) => {
-  try {
-    if (!req.file) return res.status(400).json({ message: "No file", tags: [] });
-
-    const { buffer } = req.file;
-    let visionTags = [];
-    try {
-      const [result] = await client.labelDetection({
-        image: { content: buffer.toString("base64") },
-      });
-      visionTags = result.labelAnnotations?.map((l) => l.description) || [];
-    } catch (visionError) {
-      console.warn("Vision preview failed:", visionError.message);
-      visionTags = [];
-    }
-
-    res.json({ tags: visionTags });
-  } catch (error) {
-    console.error("Preview error:", error);
-    res.status(500).json({ message: "Preview failed", tags: [] });
-  }
-};
+export const upload = multer({
+  storage,
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
+});
 
 // Get Unique Tags
 export const getTags = async (req, res) => {
   try {
     const tags = await Image.aggregate([
+      { $match: { user: req.user._id } },
       { $unwind: "$tags" },
       { $group: { _id: "$tags" } },
       { $sort: { _id: 1 } },
@@ -47,11 +27,11 @@ export const getTags = async (req, res) => {
     res.json({ tags: tagList });
   } catch (error) {
     console.error("Tags fetch error:", error);
-    res.status(500).json({ message: "Failed to fetch images", tags: [] });
+    res.status(500).json({ message: "Failed to fetch tags", tags: [] });
   }
 };
 
-// Upload Image (Unchanged)
+// Upload Image (UPDATED: Include custom tags)
 export const uploadImage = async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ message: "No file uploaded" });
@@ -67,51 +47,51 @@ export const uploadImage = async (req, res) => {
 
     blobStream.on("error", (err) => {
       console.error("Upload error:", err);
-      return res.status(500).json({ message: "Upload failed", error: err });
+      return res.status(500).json({ message: "Upload failed" });
     });
 
     blobStream.on("finish", async () => {
       try {
+        // Generate signed URL
         const [signedUrl] = await blob.getSignedUrl({
           action: "read",
-          expires: Date.now() + 1000 * 60 * 60 * 24 * 7,
+          expires: Date.now() + 15 * 24 * 60 * 60 * 1000, // 15 days
         });
 
-        const userTags = req.body.tags
-          ? req.body.tags.split(",").map((t) => t.trim()).filter(Boolean)
-          : [];
+        // Generate blurhash
+        const resizedBuffer = await sharp(buffer)
+          .resize(32, 32, { fit: "inside" })
+          .raw()
+          .toBuffer({ resolveWithObject: true });
+        const { data, info } = resizedBuffer;
+        const blurhash = encode(new Uint8ClampedArray(data), info.width, info.height, 4, 3);
 
+        // Vision API tags
         let visionTags = [];
         try {
-          const [result] = await client.labelDetection(signedUrl);
-          visionTags = result.labelAnnotations.map((l) => l.description);
+          const [result] = await client.labelDetection({
+            image: { content: buffer.toString("base64") },
+          });
+          visionTags = result.labelAnnotations?.slice(0, 5).map(l => l.description) || [];
         } catch (visionError) {
           console.warn("Vision API failed:", visionError.message);
         }
 
-        const finalTags = Array.from(new Set([...userTags, ...visionTags]));
-        if (finalTags.length === 0) finalTags.push("Untagged");
+        // Parse custom tags from req.body.tags (comma-separated string)
+        const customTags = req.body.tags
+          ? req.body.tags.split(',').map(tag => tag.trim()).filter(Boolean)
+          : [];
 
-        let blurhash = null;
-        try {
-          const { data: pixels, info } = await sharp(buffer)
-            .raw()
-            .ensureAlpha()
-            .resize(128, 128, { fit: "inside" })
-            .toBuffer({ resolveWithObject: true });
+        // Combine and dedupe tags (custom + vision)
+        const finalTags = [...new Set([...visionTags, ...customTags])];
 
-          const pixelArray = new Uint8ClampedArray(pixels);
-          blurhash = encode(pixelArray, info.width, info.height, 4, 3);
-        } catch (blurError) {
-          console.warn("Blurhash computation failed:", blurError.message);
-          blurhash = "L6PZfSi_.AyE_3t7t7R**0o#DgR4";
-        }
-
+        // Save to DB
         const newImage = await Image.create({
           url: signedUrl,
           blurhash,
           tags: finalTags,
           date: new Date(),
+          user: req.user._id,
         });
 
         return res.json({ message: "Image uploaded successfully", image: newImage });
@@ -128,19 +108,21 @@ export const uploadImage = async (req, res) => {
   }
 };
 
-// List all images (Enhanced: Pagination + Wrap)
+// List all images
 export const listImages = async (req, res) => {
   try {
     const { page = 1, limit = 20, sort = "desc" } = req.query;
     const skip = (page - 1) * limit;
     const sortObj = { date: sort === "desc" ? -1 : 1 };
 
-    const images = await Image.find()
+    let query = { user: req.user._id };
+
+    const images = await Image.find(query)
       .sort(sortObj)
       .skip(skip)
       .limit(parseInt(limit));
 
-    const total = await Image.countDocuments();
+    const total = await Image.countDocuments(query);
 
     res.json({ images, total, hasMore: skip + images.length < total });
   } catch (error) {
@@ -149,14 +131,14 @@ export const listImages = async (req, res) => {
   }
 };
 
-// Search images (Enhanced: Pagination + Wrap + Use params)
+// Search images
 export const searchImages = async (req, res) => {
   try {
     const { q, startDate, endDate, page = 1, limit = 20, sort = "desc" } = req.query;
     const skip = (page - 1) * limit;
     const sortObj = { date: sort === "desc" ? -1 : 1 };
 
-    let query = {};
+    let query = { user: req.user._id };
     if (q) query.tags = { $regex: q, $options: "i" };
     if (startDate || endDate) query.date = {};
     if (startDate) query.date.$gte = new Date(startDate);
