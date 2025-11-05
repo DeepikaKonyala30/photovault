@@ -23,7 +23,7 @@ function Signup({ setIsAuth, setShowSplashAfterAuth }) {
       setIsAuth(true); // Update auth state
       setShowSplashAfterAuth(true); // Trigger splash screen
       setMessage("Signup successful! Redirecting...");
-      setTimeout(() => navigate("/home"), 1000);
+      setTimeout(() => navigate("/login"), 1000);
     } catch (err) {
       setMessage(err.response?.data?.message || "Signup failed.");
     } finally {

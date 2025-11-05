@@ -3,83 +3,9 @@ import { motion, AnimatePresence } from "framer-motion";
 import Modal from "react-modal";
 import InfiniteScroll from "react-infinite-scroll-component";
 import { Blurhash } from 'react-blurhash';
-import { Share2, Link2 } from "lucide-react";
 
 Modal.setAppElement("#root");
 
-// ------------------------------------------------
-// SHARE + COPY helpers (both fixed & working)
-// ------------------------------------------------
-const shareImage = async (url, title) => {
-  let shortUrl = url;
-
-  // Shorten with Bitly (if token exists)
-  const bitlyToken = import.meta.env.VITE_BITLY_TOKEN;
-  if (bitlyToken) {
-    try {
-      const res = await fetch("https://api-ssl.bitly.com/v4/shorten", {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${bitlyToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ long_url: url }),
-      });
-      const data = await res.json();
-      if (data.link) shortUrl = data.link;
-    } catch (err) {
-      console.warn("Bitly failed, using original URL");
-    }
-  }
-
-  // Try native share
-  if (navigator.share) {
-    try {
-      await navigator.share({ title, url: shortUrl });
-      return;
-    } catch (_) { /* ignore */ }
-  }
-
-  // Fallback: copy short URL
-  navigator.clipboard.writeText(shortUrl).then(() => {
-    alert(`Short link copied!\n${shortUrl}`);
-  }).catch(() => {
-    prompt("Copy this short link:", shortUrl);
-  });
-};
-
-// ------------------------------------------------
-// COPY LINK – now copies SHORT URL (same as Share)
-// ------------------------------------------------
-const copyLink = async (url) => {
-  let shortUrl = url;
-
-  // Reuse Bitly logic (same as share)
-  const bitlyToken = import.meta.env.VITE_BITLY_TOKEN;
-  if (bitlyToken) {
-    try {
-      const res = await fetch("https://api-ssl.bitly.com/v4/shorten", {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${bitlyToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ long_url: url }),
-      });
-      const data = await res.json();
-      if (data.link) shortUrl = data.link;
-    } catch (err) {
-      console.warn("Bitly failed for copy, using original URL");
-    }
-  }
-
-  // Copy the short URL
-  navigator.clipboard.writeText(shortUrl).then(() => {
-    alert(`Short link copied!\n${shortUrl}`);
-  }).catch(() => {
-    prompt("Copy this short link:", shortUrl);
-  });
-};
 class ErrorBoundary extends Component {
   state = { hasError: false };
   static getDerivedStateFromError() { return { hasError: true }; }
@@ -233,25 +159,6 @@ export default function ImageGallery({ images = [], fetchMore, hasMore, loading,
                         New!
                       </motion.span>
                     )}
-
-                    {/* ACTION BUTTONS: Share + Copy Link */}
-                    <div className="action-btns">
-                      <button
-                        className="action-btn"
-                        onClick={(e) => { e.stopPropagation(); shareImage(img.url, (img?.tags || []).join(', ') || 'Glimmr Image'); }}
-                        aria-label="Share"
-                      >
-                        <Share2 size={18} />
-                      </button>
-
-                      <button
-                        className="action-btn"
-                        onClick={(e) => { e.stopPropagation(); copyLink(img.url); }}
-                        aria-label="Copy link"
-                      >
-                        <Link2 size={18} />
-                      </button>
-                    </div>
 
                     <Blurhash
                       hash={img.blurhash || 'L6PZfSi_.AyE_3t7t7R**0o#DgR4'}
